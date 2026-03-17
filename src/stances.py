@@ -27,6 +27,23 @@ import feedparser
 import pandas as pd
 from bs4 import BeautifulSoup
 
+import html
+import re
+from html.parser import HTMLParser
+
+
+def _strip_html(text: str) -> str:
+    """Strip HTML tags and decode entities from text."""
+    if not isinstance(text, str):
+        return ""
+    text = html.unescape(text)
+    class _S(HTMLParser):
+        def __init__(self): super().__init__(); self.t = []
+        def handle_data(self, d): self.t.append(d)
+    s = _S(); s.feed(text)
+    return re.sub(r'\s+', ' ', ' '.join(s.t)).strip()
+
+
 from src.config import (
     LEGISLATORS_CSV,
     STANCES_CSV,
@@ -121,7 +138,7 @@ def parse_rss_for_stances(bioguide_id: str, rss_url: Optional[str]) -> list[dict
             or getattr(entry, "updated",   "")
         )
 
-        text   = f"{title}\n{summary}".strip()
+        text   = _strip_html(f"{title}\n{summary}".strip())
         topics = classify_topics(text)
 
         if not topics:
