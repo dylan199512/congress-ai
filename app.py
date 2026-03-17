@@ -431,6 +431,24 @@ with tab_compare:
                     for _, row in bills.head(4).iterrows():
                         st.markdown(_bill_card_html(row), unsafe_allow_html=True)
 
+                # Votes
+                try:
+                    import pandas as pd
+                    from src.config import VOTES_CSV, LEGISLATORS_CSV
+                    votes_df = pd.read_csv(VOTES_CSV)
+                    leg_df2  = pd.read_csv(LEGISLATORS_CSV)
+                    lis_map  = dict(zip(leg_df2["bioguide_id"].fillna(""), leg_df2["lis_id"].fillna("")))
+                    from src.retrieval import build_votes_context
+                    bills_df2 = pd.read_csv(BILLS_CSV)
+                    vc = build_votes_context([bio], votes_df, lis_map, bills_df2)
+                    if vc and len(vc) > 30:
+                        st.markdown("**Votes on Healthcare/AI Bills**")
+                        for line in vc.split("\n")[2:7]:
+                            if line.strip():
+                                st.markdown(f"<div class='evidence-card'><div class='meta'>{line.strip()}</div></div>", unsafe_allow_html=True)
+                except Exception:
+                    pass
+
         render_member_column(col1, mem_a, stances_a, bills_a, member_a)
         render_member_column(col2, mem_b, stances_b, bills_b, member_b)
 
