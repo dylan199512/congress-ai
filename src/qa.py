@@ -169,8 +169,27 @@ def answer_question(
     except Exception as e:
         print(f"Votes context error: {e}")
 
+    # --- Member profile context ---
+    profile_context = ""
+    try:
+        from src.member_profiles import get_member_profile_context
+        from src.config import LEGISLATORS_CSV
+        import pandas as pd
+        leg_df = pd.read_csv(LEGISLATORS_CSV)
+        query_lower = query.lower()
+        for _, row in leg_df.iterrows():
+            last_name = str(row.get("last_name","") or "").lower()
+            if last_name and last_name in query_lower:
+                bio = str(row.get("bioguide_id","") or "")
+                if bio:
+                    profile_context += get_member_profile_context(bio)
+    except Exception as e:
+        pass
+
     # --- Context ---
     context = build_context(stance_hits, bill_hits, votes_context)
+    if profile_context:
+        context += "\n\n=== Sponsored/Cosponsored Legislation ===\n" + profile_context
 
     prompt = _USER_TEMPLATE.format(context=context, question=query)
 
