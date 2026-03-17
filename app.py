@@ -156,10 +156,13 @@ def _bill_card_html(row):
     summary = str(row.get("summary","") or "")
     topics  = str(row.get("topics","")  or "")
     sponsor = str(row.get("sponsor_bioguide_id","") or "")
-    if summary.lower() in ("nan","none",""): summary = title
+    # Don't show summary if it's identical to title
+    if summary.lower() in ("nan","none","") or summary.strip() == title.strip():
+        summary = ""
     badges = " ".join(_topic_badge(t.strip()) for t in topics.split(",") if t.strip())
     sp_tag = f"<span style='color:#6b7585;font-size:0.7rem'>Sponsor: {sponsor}</span>" if sponsor and sponsor.lower() not in ("nan","") else ""
-    return f"<div class='bill-card'><div class='bill-id'>{bill_id} {badges} {sp_tag}</div><div class='bill-title'>{title}</div><div class='bill-summary'>{summary[:300]}{'…' if len(summary)>300 else ''}</div></div>"
+    summary_html = f"<div class='bill-summary'>{summary[:300]}{'…' if len(summary)>300 else ''}</div>" if summary else ""
+    return f"<div class='bill-card'><div class='bill-id'>{bill_id} {badges} {sp_tag}</div><div class='bill-title'>{title}</div>{summary_html}</div>"
 
 # Stats bar
 stats = _dataset_stats()
@@ -172,7 +175,7 @@ st.markdown(
 st.markdown("<hr class='divider'>", unsafe_allow_html=True)
 
 # Tabs
-tab_qa, tab_members, tab_bills = st.tabs(["💬 Q&A", "👤 Member Lookup", "📋 Browse Bills"])
+tab_qa, tab_members, tab_bills, tab_compare, tab_align = st.tabs(["💬 Q&A", "👤 Member Lookup", "📋 Browse Bills", "⚖️ Compare Members", "🎯 Alignment Scores"])
 
 # ── TAB 1: Q&A ──────────────────────────────────────────────────────────────
 with tab_qa:
@@ -350,3 +353,168 @@ with tab_bills:
 
         for _, row in fb.iloc[start:start+page_size].iterrows():
             st.markdown(_bill_card_html(row), unsafe_allow_html=True)
+
+
+# ── TAB 4: COMPARE MEMBERS ──────────────────────────────────────────────────
+with tab_compare:
+    st.markdown("### Compare Members")
+    st.markdown("Side-by-side comparison of two legislators on healthcare and AI.")
+
+    legislators_df = _load_legislators()
+    stances_df     = _load_stances()
+    bills_df_raw   = _load_bills()
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        member_a = st.text_input("Member A", placeholder="e.g. Sanders, Pelosi…", key="cmp_a")
+    with col_b:
+        member_b = st.text_input("Member B", placeholder="e.g. McConnell, Cruz…", key="cmp_b")
+
+    topic_cmp = st.selectbox("Topic", ["All", "healthcare", "ai"], key="cmp_topic")
+
+    def get_member_data(name_search):
+        if not name_search.strip():
+            return None, pd.DataFrame(), pd.DataFrame()
+        matches = legislators_df[legislators_df["full_name"].str.contains(name_search, case=False, na=False)]
+        if matches.empty:
+            return None, pd.DataFrame(), pd.DataFrame()
+        member = matches.iloc[0]
+        bio    = str(member.get("bioguide_id","") or "")
+        m_stances = stances_df[stances_df["bioguide_id"]==bio].copy() if not stances_df.empty else pd.DataFrame()
+        m_bills   = bills_df_raw[bills_df_raw["sponsor_bioguide_id"]==bio].copy() if not bills_df_raw.empty else pd.DataFrame()
+        if topic_cmp != "All":
+            if not m_stances.empty: m_stances = m_stances[m_stances["topic"]==topic_cmp]
+            if not m_bills.empty:   m_bills   = m_bills[m_bills["topics"].str.contains(topic_cmp, na=False)]
+        return member, m_stances, m_bills
+
+    if member_a.strip() or member_b.strip():
+        mem_a, stances_a, bills_a = get_member_data(member_a)
+        mem_b, stances_b, bills_b = get_member_data(member_b)
+
+        col1, col2 = st.columns(2)
+
+        def render_member_column(col, member, stances, bills, label):
+            with col:
+                if member is None:
+                    st.markdown(f"<div style='color:#6b7585'>No member found for '{label}'</div>", unsafe_allow_html=True)
+                    return
+                name    = str(member.get("full_name","") or "")
+                state   = str(member.get("state","")     or "")
+                party   = str(member.get("party","")     or "")
+                mtype   = str(member.get("type","")      or "")
+                chamber = "Senator" if mtype=="sen" else "Representative"
+                bio     = str(member.get("bioguide_id","") or "")
+
+                st.markdown(f"""
+<div class='member-card'>
+  <div style='font-family:Playfair Display,serif;font-size:1.1rem;color:#c8a96e'>{name}</div>
+  <div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#6b7585'>{chamber} · {state} · {party} · {bio}</div>
+</div>""", unsafe_allow_html=True)
+
+                st.markdown(f"**Stances ({len(stances)})**")
+                if stances.empty:
+                    st.markdown("<div style='color:#6b7585;font-size:0.8rem'>No stances found.</div>", unsafe_allow_html=True)
+                else:
+                    for _, row in stances.head(4).iterrows():
+                        date  = str(row.get("date","") or "")
+                        topic = str(row.get("topic","") or "")
+                        text  = str(row.get("text","") or "")
+                        url   = str(row.get("source_url","") or "")
+                        badge = _topic_badge(topic) if topic else ""
+                        url_tag = f"<a href='{url}' target='_blank' style='color:#4a9eff;font-size:0.7rem'>source ↗</a>" if url.startswith("http") else ""
+                        st.markdown(f"<div class='evidence-card'><div class='meta'>{badge} {date} {url_tag}</div><div>{text[:200]}{'…' if len(text)>200 else ''}</div></div>", unsafe_allow_html=True)
+
+                st.markdown(f"**Sponsored Bills ({len(bills)})**")
+                if bills.empty:
+                    st.markdown("<div style='color:#6b7585;font-size:0.8rem'>No sponsored bills found.</div>", unsafe_allow_html=True)
+                else:
+                    for _, row in bills.head(4).iterrows():
+                        st.markdown(_bill_card_html(row), unsafe_allow_html=True)
+
+        render_member_column(col1, mem_a, stances_a, bills_a, member_a)
+        render_member_column(col2, mem_b, stances_b, bills_b, member_b)
+
+# ── TAB 5: ALIGNMENT SCORES ─────────────────────────────────────────────────
+with tab_align:
+    st.markdown("### Alignment Scores")
+    st.markdown("Members ranked by their support or opposition to healthcare and AI legislation.")
+
+    from pathlib import Path
+    ALIGNMENT_CSV = Path("data/alignment_scores.csv")
+
+    if not ALIGNMENT_CSV.exists():
+        st.info("Alignment scores not yet computed. Run this in Terminal to generate them:")
+        st.code("""
+import sys
+sys.path.insert(0, '.')
+from src.alignment_scoring import compute_alignment_scores
+compute_alignment_scores()
+""")
+    else:
+        align_df = pd.read_csv(ALIGNMENT_CSV)
+        leg_df   = _load_legislators()
+
+        # Merge with legislator names
+        if not leg_df.empty:
+            align_df = align_df.merge(
+                leg_df[["bioguide_id","full_name","state","party","type"]],
+                on="bioguide_id", how="left"
+            )
+
+        col_at, col_ac = st.columns([1,2])
+        with col_at:
+            align_topic = st.selectbox("Topic", ["healthcare","ai"], key="align_topic")
+        with col_ac:
+            align_sort = st.selectbox("Sort by", ["Top supporters","Top opponents","Most hypocritical"], key="align_sort")
+
+        topic_df = align_df[align_df["topic"] == align_topic].copy()
+
+        if align_sort == "Top supporters":
+            topic_df = topic_df.sort_values("alignment_score", ascending=False)
+        elif align_sort == "Top opponents":
+            topic_df = topic_df.sort_values("alignment_score", ascending=True)
+        else:
+            topic_df = topic_df[topic_df["hypocrisy_flag"]==True].sort_values("alignment_score", ascending=False)
+
+        st.markdown(f"<div style='color:#6b7585;font-family:IBM Plex Mono,monospace;font-size:0.75rem;margin-bottom:1rem'>{len(topic_df)} members</div>", unsafe_allow_html=True)
+
+        # Filter out rows with no name
+        topic_df = topic_df[topic_df["full_name"].notna() & (topic_df["full_name"] != "nan")]
+        for _, row in topic_df.head(20).iterrows():
+            name    = str(row.get("full_name","")  or row.get("bioguide_id",""))
+            state   = str(row.get("state","")      or "")
+            party   = str(row.get("party","")      or "")
+            score   = float(row.get("alignment_score", 0))
+            hyp     = bool(row.get("hypocrisy_flag", False))
+            sp_cnt  = int(row.get("sponsor_count",  0))
+            vt_cnt  = int(row.get("vote_count",     0))
+            st_cnt  = int(row.get("stance_count",   0))
+
+            # Score bar color
+            if score > 0.3:
+                bar_color = "#5fb88a"
+            elif score < -0.3:
+                bar_color = "#d95f5f"
+            else:
+                bar_color = "#6b7585"
+
+            bar_width = int(abs(score) * 100)
+            hyp_tag   = " ⚠️ <span style='color:#c8a96e;font-size:0.7rem'>votes ≠ statements</span>" if hyp else ""
+            direction = "▶" if score >= 0 else "◀"
+
+            card = (
+                f"<div class='bill-card'>"
+                f"<div style='display:flex;justify-content:space-between;align-items:center'>"
+                f"<div><span style='font-weight:500;color:#e8e4dc'>{name}</span>"
+                f"<span style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#6b7585'> · {state} · {party}</span>"
+                f"{hyp_tag}</div>"
+                f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;color:{bar_color}'>{score:+.2f}</div>"
+                f"</div>"
+                f"<div style='background:#252b33;border-radius:2px;height:4px;margin:6px 0'>"
+                f"<div style='background:{bar_color};width:{bar_width}%;height:4px;border-radius:2px'></div>"
+                f"</div>"
+                f"<div style='font-size:0.72rem;color:#6b7585'>"
+                f"{sp_cnt} bills sponsored · {vt_cnt} votes · {st_cnt} stances"
+                f"</div></div>"
+            )
+            st.markdown(card, unsafe_allow_html=True)
