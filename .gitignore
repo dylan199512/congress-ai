@@ -1,0 +1,8 @@
+cache/
+data/*.csv
+data/*.npy
+__pycache__/
+*.pyc
+.DS_Store
+.env
+logs/
