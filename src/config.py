@@ -69,10 +69,20 @@ HEALTHCARE_KEYWORDS: list[str] = [
 ]
 
 AI_KEYWORDS: list[str] = [
-    "ai", "artificial intelligence", "machine learning", "ml",
-    "algorithm", "automation", "data privacy", "data security",
-    "cybersecurity", "cyber", "intellectual property", "deep learning",
-    "neural network", "large language model", "chatbot",
+    "artificial intelligence",
+    "machine learning",
+    "large language model",
+    "deep learning",
+    "neural network",
+    "generative ai",
+    "ai regulation",
+    "ai safety",
+    "ai accountability",
+    "algorithmic",
+    "automated decision",
+    "facial recognition",
+    "chatbot",
+    "foundation model",
 ]
 
 TOPIC_WHITELIST: set[str] = {
