@@ -164,6 +164,13 @@ def _bill_card_html(row):
     summary_html = f"<div class='bill-summary'>{summary[:300]}{'…' if len(summary)>300 else ''}</div>" if summary else ""
     return f"<div class='bill-card'><div class='bill-id'>{bill_id} {badges} {sp_tag}</div><div class='bill-title'>{title}</div>{summary_html}</div>"
 
+def _member_photo_url(bioguide_id: str) -> str:
+    """Return the official congressional photo URL for a bioguide ID."""
+    if not bioguide_id or len(bioguide_id) < 1:
+        return ""
+    first = bioguide_id[0].upper()
+    return f"https://bioguide.congress.gov/bioguide/photo/{first}/{bioguide_id}.jpg"
+
 # Stats bar
 stats = _dataset_stats()
 st.markdown(
@@ -175,7 +182,7 @@ st.markdown(
 st.markdown("<hr class='divider'>", unsafe_allow_html=True)
 
 # Tabs
-tab_qa, tab_members, tab_bills, tab_compare, tab_align = st.tabs(["💬 Q&A", "👤 Member Lookup", "📋 Browse Bills", "⚖️ Compare Members", "🎯 Alignment Scores"])
+tab_qa, tab_members, tab_bills, tab_compare, tab_align, tab_trends = st.tabs(["💬 Q&A", "👤 Member Lookup", "📋 Browse Bills", "⚖️ Compare Members", "🎯 Alignment Scores", "📈 Trends"])
 
 # ── TAB 1: Q&A ──────────────────────────────────────────────────────────────
 with tab_qa:
@@ -405,8 +412,11 @@ with tab_compare:
                 chamber = "Senator" if mtype=="sen" else "Representative"
                 bio     = str(member.get("bioguide_id","") or "")
 
+                photo_url = _member_photo_url(bio)
+                photo_html = f"<img src='{photo_url}' style='width:60px;height:75px;object-fit:cover;border-radius:4px;margin-right:12px;float:left' onerror='this.style.display=\"none\"'>" if photo_url else ""
                 st.markdown(f"""
-<div class='member-card'>
+<div class='member-card' style='overflow:hidden'>
+  {photo_html}
   <div style='font-family:Playfair Display,serif;font-size:1.1rem;color:#c8a96e'>{name}</div>
   <div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#6b7585'>{chamber} · {state} · {party} · {bio}</div>
 </div>""", unsafe_allow_html=True)
@@ -452,6 +462,84 @@ with tab_compare:
         render_member_column(col1, mem_a, stances_a, bills_a, member_a)
         render_member_column(col2, mem_b, stances_b, bills_b, member_b)
 
+        # PDF export for comparison
+        if mem_a is not None and mem_b is not None:
+            try:
+                from reportlab.lib.pagesizes import letter
+                from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
+                from reportlab.lib.styles import ParagraphStyle
+                from reportlab.lib import colors
+                import io
+
+                buf = io.BytesIO()
+                doc = SimpleDocTemplate(buf, pagesize=letter,
+                    leftMargin=0.85*72, rightMargin=0.85*72,
+                    topMargin=0.85*72, bottomMargin=0.85*72)
+
+                gold  = colors.HexColor("#c8a96e")
+                light = colors.HexColor("#e8e4dc")
+                muted = colors.HexColor("#6b7585")
+                green = colors.HexColor("#5fb88a")
+                blue  = colors.HexColor("#4a9eff")
+
+                title_style = ParagraphStyle("t", fontSize=18, textColor=gold, fontName="Helvetica-Bold", spaceAfter=4)
+                sub_style   = ParagraphStyle("s", fontSize=9,  textColor=muted, fontName="Helvetica", spaceAfter=16)
+                sec_style   = ParagraphStyle("sec", fontSize=11, textColor=gold, fontName="Helvetica-Bold", spaceBefore=12, spaceAfter=6)
+                body_style  = ParagraphStyle("b", fontSize=9,  textColor=light, fontName="Helvetica", leading=14, spaceAfter=4)
+                mono_style  = ParagraphStyle("m", fontSize=8,  textColor=muted, fontName="Courier", leading=12, spaceAfter=2)
+
+                from datetime import datetime
+                story = [
+                    Paragraph("Congress AI — Member Comparison", title_style),
+                    Paragraph(f"{datetime.today().strftime('%B %d, %Y')} · Topic: {topic_cmp}", sub_style),
+                    HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#252b33"), spaceAfter=8),
+                ]
+
+                for label, member, stances, bills in [
+                    (member_a, mem_a, stances_a, bills_a),
+                    (member_b, mem_b, stances_b, bills_b),
+                ]:
+                    name    = str(member.get("full_name","") or "")
+                    state   = str(member.get("state","") or "")
+                    party   = str(member.get("party","") or "")
+                    mtype   = str(member.get("type","") or "")
+                    chamber = "Senator" if mtype=="sen" else "Representative"
+                    bio     = str(member.get("bioguide_id","") or "")
+
+                    story.append(Paragraph(name, sec_style))
+                    story.append(Paragraph(f"{chamber} · {state} · {party} · {bio}", mono_style))
+                    story.append(Spacer(1, 6))
+
+                    story.append(Paragraph(f"Stances ({len(stances)})", body_style))
+                    for _, row in stances.head(3).iterrows():
+                        text = str(row.get("text","") or "")[:200]
+                        date = str(row.get("date","") or "")
+                        story.append(Paragraph(f"{date}: {text}…", mono_style))
+
+                    story.append(Spacer(1, 4))
+                    story.append(Paragraph(f"Sponsored Bills ({len(bills)})", body_style))
+                    for _, row in bills.head(5).iterrows():
+                        bid   = str(row.get("bill_id","") or "")
+                        title = str(row.get("title","") or "")[:80]
+                        story.append(Paragraph(f"{bid}: {title}", mono_style))
+
+                    story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#252b33"), spaceAfter=8, spaceBefore=8))
+
+                story.append(Paragraph("Generated by Congress AI · Data: Congress.gov · GovInfo", mono_style))
+                doc.build(story)
+
+                name_a = str(mem_a.get("full_name","A") or "A").split()[-1]
+                name_b = str(mem_b.get("full_name","B") or "B").split()[-1]
+                st.download_button(
+                    "📄 Download Comparison as PDF",
+                    buf.getvalue(),
+                    f"comparison_{name_a}_vs_{name_b}.pdf",
+                    "application/pdf",
+                    key="compare_pdf"
+                )
+            except Exception as e:
+                st.caption(f"PDF export error: {e}")
+
 # ── TAB 5: ALIGNMENT SCORES ─────────────────────────────────────────────────
 with tab_align:
     st.markdown("### Alignment Scores")
@@ -479,13 +567,17 @@ compute_alignment_scores()
                 on="bioguide_id", how="left"
             )
 
-        col_at, col_ac = st.columns([1,2])
+        col_at, col_ac, col_ap = st.columns([1,2,1])
         with col_at:
             align_topic = st.selectbox("Topic", ["healthcare","ai"], key="align_topic")
         with col_ac:
             align_sort = st.selectbox("Sort by", ["Top supporters","Top opponents","Most hypocritical"], key="align_sort")
+        with col_ap:
+            align_party = st.selectbox("Party", ["All","Democrat","Republican","Independent"], key="align_party")
 
         topic_df = align_df[align_df["topic"] == align_topic].copy()
+        if align_party != "All":
+            topic_df = topic_df[topic_df["party"] == align_party]
 
         if align_sort == "Top supporters":
             topic_df = topic_df.sort_values("alignment_score", ascending=False)
@@ -520,12 +612,14 @@ compute_alignment_scores()
             hyp_tag   = " ⚠️ <span style='color:#c8a96e;font-size:0.7rem'>votes ≠ statements</span>" if hyp else ""
             direction = "▶" if score >= 0 else "◀"
 
+            photo_url = _member_photo_url(row.get("bioguide_id",""))
+            photo_html = f"<img src='{photo_url}' style='width:36px;height:45px;object-fit:cover;border-radius:3px;margin-right:10px;vertical-align:middle' onerror='this.style.display=\"none\"'>'" if photo_url else ""
             card = (
                 f"<div class='bill-card'>"
                 f"<div style='display:flex;justify-content:space-between;align-items:center'>"
-                f"<div><span style='font-weight:500;color:#e8e4dc'>{name}</span>"
+                f"<div style='display:flex;align-items:center'>{photo_html}<div><span style='font-weight:500;color:#e8e4dc'>{name}</span>"
                 f"<span style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;color:#6b7585'> · {state} · {party}</span>"
-                f"{hyp_tag}</div>"
+                f"{hyp_tag}</div></div>"
                 f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;color:{bar_color}'>{score:+.2f}</div>"
                 f"</div>"
                 f"<div style='background:#252b33;border-radius:2px;height:4px;margin:6px 0'>"
@@ -536,3 +630,77 @@ compute_alignment_scores()
                 f"</div></div>"
             )
             st.markdown(card, unsafe_allow_html=True)
+
+
+# ── TAB 6: TRENDS ───────────────────────────────────────────────────────────
+with tab_trends:
+    st.markdown("### Legislative Trends")
+    st.markdown("Healthcare and AI bill introductions over time.")
+
+    import plotly.express as px
+    import plotly.graph_objects as go
+
+    bills_trend = _load_bills()
+
+    if bills_trend.empty:
+        st.error("Bills data not found.")
+    else:
+        # Parse introduced dates from bill summaries - use bills with dates
+        try:
+            profiles_trend = pd.read_csv("data/member_profiles.csv")
+            profiles_trend["introduced_date"] = pd.to_datetime(profiles_trend["introduced_date"], errors="coerce")
+            profiles_trend = profiles_trend.dropna(subset=["introduced_date"])
+            profiles_trend["month"] = profiles_trend["introduced_date"].dt.to_period("M").astype(str)
+            profiles_trend = profiles_trend[profiles_trend["introduced_date"].dt.year >= 2023]
+
+            col_t1, col_t2 = st.columns(2)
+
+            with col_t1:
+                # Healthcare bills over time
+                hc = profiles_trend[profiles_trend["topics"].str.contains("healthcare", na=False)]
+                hc_monthly = hc.groupby("month").size().reset_index(name="count")
+                fig1 = px.line(hc_monthly, x="month", y="count",
+                    title="Healthcare Bills Introduced per Month",
+                    color_discrete_sequence=["#5fb88a"])
+                fig1.update_layout(
+                    paper_bgcolor="#0d0f12", plot_bgcolor="#14181e",
+                    font_color="#e8e4dc", title_font_color="#c8a96e",
+                    xaxis=dict(gridcolor="#252b33"),
+                    yaxis=dict(gridcolor="#252b33"),
+                )
+                st.plotly_chart(fig1, use_container_width=True)
+
+            with col_t2:
+                # AI bills over time
+                ai = profiles_trend[profiles_trend["topics"].str.contains("ai", na=False)]
+                ai_monthly = ai.groupby("month").size().reset_index(name="count")
+                fig2 = px.line(ai_monthly, x="month", y="count",
+                    title="AI Bills Introduced per Month",
+                    color_discrete_sequence=["#4a9eff"])
+                fig2.update_layout(
+                    paper_bgcolor="#0d0f12", plot_bgcolor="#14181e",
+                    font_color="#e8e4dc", title_font_color="#c8a96e",
+                    xaxis=dict(gridcolor="#252b33"),
+                    yaxis=dict(gridcolor="#252b33"),
+                )
+                st.plotly_chart(fig2, use_container_width=True)
+
+            # Party breakdown
+            st.markdown("### Bills by Party")
+            leg_trend = _load_legislators()
+            merged = profiles_trend.merge(leg_trend[["bioguide_id","party"]], on="bioguide_id", how="left")
+            party_topic = merged.groupby(["party","topics"]).size().reset_index(name="count")
+            party_topic = party_topic[party_topic["party"].isin(["Democrat","Republican","Independent"])]
+            fig3 = px.bar(party_topic, x="party", y="count", color="topics",
+                title="Bills by Party and Topic",
+                color_discrete_map={"healthcare": "#5fb88a", "ai": "#4a9eff", "healthcare,ai": "#c8a96e"})
+            fig3.update_layout(
+                paper_bgcolor="#0d0f12", plot_bgcolor="#14181e",
+                font_color="#e8e4dc", title_font_color="#c8a96e",
+                xaxis=dict(gridcolor="#252b33"),
+                yaxis=dict(gridcolor="#252b33"),
+            )
+            st.plotly_chart(fig3, use_container_width=True)
+
+        except Exception as e:
+            st.error(f"Could not load trend data: {e}")
