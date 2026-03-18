@@ -84,6 +84,15 @@ Retrieval-augmented Q&A over:
         if st.button(q, key=f"ex_{q[:20]}"):
             st.session_state["prefill_query"] = q
     st.markdown("---")
+    if st.session_state.get("saved_sessions"):
+        st.markdown("**💾 Saved Sessions**")
+        for i, s in enumerate(reversed(st.session_state["saved_sessions"][-5:])):
+            if st.button(f"[{s['time']}] {s['query'][:30]}…", key=f"recall_{i}"):
+                st.session_state["prefill_query"] = s["query"]
+        if st.button("Clear saved", key="clear_saved"):
+            st.session_state["saved_sessions"] = []
+            st.rerun()
+        st.markdown("---")
     st.markdown("<div style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;color:#6b7585'>Data: Congress.gov · GovInfo · legislators-current.csv</div>", unsafe_allow_html=True)
 
 # Header
@@ -95,7 +104,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Session state
-for key, default in [("history",[]),("prefill_query","")]:
+for key, default in [("history",[]),("prefill_query",""),("saved_sessions",[])]:
     if key not in st.session_state:
         st.session_state[key] = default
 
@@ -235,6 +244,13 @@ with tab_qa:
                         st.markdown(_bill_card_html(row), unsafe_allow_html=True)
             with st.expander("🔍 Raw context sent to Claude"):
                 st.markdown(f"<div class='context-box'>{result.context}</div>", unsafe_allow_html=True)
+
+            # Save session button
+            col_pdf, col_save = st.columns([2,1])
+            with col_save:
+                if st.button("💾 Save to history", key=f"save_{hash(q)}"):
+                    st.session_state["saved_sessions"].append({"query": q, "answer": result.answer, "time": __import__("datetime").datetime.now().strftime("%H:%M")})
+                    st.success("Saved!")
 
             # PDF export button
             try:

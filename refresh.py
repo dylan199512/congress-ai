@@ -102,6 +102,14 @@ if __name__ == "__main__":
     from src.embed import load_indexes
     results["embeddings"] = run_step("Rebuild embeddings", load_indexes)
 
+    # Step 5: Send email digest
+    try:
+        from src.email_alerts import send_daily_digest
+        send_daily_digest()
+        logger.info("✓ Email digest sent")
+    except Exception as e:
+        logger.warning("Email digest failed: %s", e)
+
     # Summary
     elapsed = (datetime.now() - start).seconds // 60
     logger.info("=" * 50)
